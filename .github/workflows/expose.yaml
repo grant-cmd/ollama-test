@@ -2,8 +2,9 @@ name: Ollama MCP Server with Ngrok and Hardware Testing
 
 on:
   workflow_dispatch:  # Manual trigger
-  schedule:
-    - cron: '0 0 * * *'  # Optional: runs daily at midnight UTC
+  push:
+  # schedule:
+  #   - cron: '0 0 * * *'  # Optional: runs daily at midnight UTC
 
 env:
   MODEL_NAME: "deepseek-coder:6.7b"  # Using Deepseek Coder 70B model
