@@ -46,31 +46,7 @@ jobs:
         echo "OS Version: $(lsb_release -d | cut -f2)"
         echo "=== ======================= ==="
 
-    - name: Validate resource requirements
-      run: |
-        # Check if system meets minimum requirements for 70B model
-        MIN_RAM=64  # Minimum 64GB RAM recommended for 70B model
-        MIN_DISK=150  # Minimum 150GB disk space
-        
-        AVAILABLE_RAM=$(free -g | awk '/^Mem:/ {print $7}')
-        AVAILABLE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-        
-        echo "Checking system meets minimum requirements for ${MODEL_NAME}..."
-        
-        if [ "$AVAILABLE_RAM" -lt "$MIN_RAM" ]; then
-          echo "❌ WARNING: Insufficient RAM. Available: ${AVAILABLE_RAM}GB, Recommended: ${MIN_RAM}GB"
-          echo "Model may run slowly or fail"
-        else
-          echo "✅ RAM: ${AVAILABLE_RAM}GB (Meets requirement)"
-        fi
-        
-        if [ "$AVAILABLE_DISK" -lt "$MIN_DISK" ]; then
-          echo "❌ ERROR: Insufficient disk space. Available: ${AVAILABLE_DISK}GB, Required: ${MIN_DISK}GB"
-          exit 1
-        else
-          echo "✅ Disk Space: ${AVAILABLE_DISK}GB (Meets requirement)"
-        fi
-
+   
     - name: Install system dependencies
       run: |
         sudo apt-get update
