@@ -126,7 +126,7 @@ jobs:
         # Test generate endpoint
         curl -X POST "$NGROK_URL/api/generate" \
           -H "Content-Type: application/json" \
-          -d '{"model": "deepseek-coder", "prompt": "Hello", "stream": false}' \
+          -d '{"model": "deepseek-coder:6.7b", "prompt": "Hello", "stream": false}' \
           -w "\nResponse Code: %{http_code}\n"
         
         echo "Test completed successfully"
@@ -141,11 +141,11 @@ jobs:
         
         # Show ngrok inspection interface info
         echo "For detailed request inspection, visit: http://localhost:4040"
-        echo "Use this for testing: curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"mistral\", \"prompt\": \"Hello\"}'"
+        echo "Use this for testing: curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"deepseek-coder:6.7b\", \"prompt\": \"Hello\"}'"
 
     - name: Keep server running for testing (optional)
       if: always()
       run: |
         echo "Server is running. Press Ctrl+C to stop or wait for timeout."
         # Keep the workflow running for 10 minutes for testing
-        sleep 18000
+        sleep 600
