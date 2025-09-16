@@ -1,7 +1,7 @@
-name: Ollama MCP Server with Ngrok (Foreground with Logs)
+name: Ollama MCP Server with Ngrok (Debug Version)
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   setup-ollama-with-ngrok:
@@ -12,13 +12,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Check system resources
+    - name: Install dependencies
       run: |
-        echo "=== SYSTEM RESOURCES ==="
-        echo "CPU cores: $(nproc)"
-        free -h
-        df -h
-        echo "=== =============== ==="
+        sudo apt-get update
+        sudo apt-get install -y curl wget jq
 
     - name: Install Ollama
       run: |
@@ -27,20 +24,41 @@ jobs:
 
     - name: Stop any existing Ollama processes
       run: |
-        # Stop Ollama systemd service if exists
-        sudo systemctl stop ollama.service 2>/dev/null || true
+        pkill -f ollama || true
+        sleep 2
+
+    - name: Create Ollama directory structure
+      run: |
+        mkdir -p ~/.ollama/logs
+        touch ~/.ollama/logs/server.log
+        echo "Ollama directory structure created"
+
+    - name: Start Ollama with MCP enabled
+      env:
+        OLLAMA_MCP_ENABLE: "true"
+      run: |
+        # Start Ollama with explicit logging
+        ollama serve > ~/.ollama/logs/server.log 2>&1 &
+        echo "Ollama started with PID: $!"
+        sleep 10
         
-        # Kill any running Ollama processes
-        pkill -f "ollama serve" 2>/dev/null || true
-        pkill -f ollama 2>/dev/null || true
-        
-        # Verify no Ollama processes are running
-        if pgrep ollama >/dev/null; then
-          echo "Warning: Some Ollama processes still running"
-          ps aux | grep ollama
+        # Verify Ollama is running
+        if curl -s http://localhost:11434/api/tags >/dev/null; then
+          echo "✅ Ollama server is running and responsive"
+          echo "Ollama logs:"
+          cat ~/.ollama/logs/server.log
         else
-          echo "Ollama processes stopped successfully"
+          echo "❌ Ollama server failed to start"
+          cat ~/.ollama/logs/server.log
+          exit 1
         fi
+
+    - name: Pull model
+      env:
+        OLLAMA_MCP_ENABLE: "true"
+      run: |
+        ollama pull mistral
+        echo "Model pulled successfully"
 
     - name: Install ngrok
       run: |
@@ -54,42 +72,11 @@ jobs:
         ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
         echo "Ngrok authtoken configured"
 
-    - name: Start Ollama with MCP enabled in foreground
-      env:
-        OLLAMA_MCP_ENABLE: "true"  # Enable MCP support
+    - name: Start ngrok tunnel
       run: |
-        echo "Starting Ollama server with MCP enabled..."
-        # Start Ollama in foreground with verbose output
-        ollama serve &
-        OLLAMA_PID=$!
-        echo "Ollama started with PID: $OLLAMA_PID"
-        
-        # Wait a moment for server to initialize
-        sleep 5
-        
-        # Verify Ollama is running
-        if curl -s http://localhost:11434/api/tags >/dev/null; then
-          echo "✅ Ollama server is running and responsive"
-        else
-          echo "❌ Ollama server failed to start"
-          exit 1
-        fi
-
-    - name: Pull model
-      env:
-        OLLAMA_MCP_ENABLE: "true"
-      run: |
-        ollama pull deepseek-coder:6.7b
-        echo "Model pulled successfully"
-
-    - name: Start ngrok tunnel and test connection
-      run: |
-        # Start ngrok in background
+        # Start ngrok with more verbose logging
         ngrok http 11434 --log=stdout > ngrok.log 2>&1 &
-        NGROK_PID=$!
-        echo "Ngrok started with PID: $NGROK_PID"
-        
-        # Wait for ngrok to initialize
+        echo "Ngrok started with PID: $!"
         sleep 10
         
         # Get ngrok public URL
@@ -97,8 +84,7 @@ jobs:
         echo "Ngrok Public URL: $NGROK_URL"
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
         
-        # Test connection through ngrok
-        echo "Testing connection through ngrok..."
+        # Test basic connection
         if curl -s "$NGROK_URL/api/tags" >/dev/null; then
           echo "✅ Ngrok tunnel is working correctly"
         else
@@ -108,44 +94,53 @@ jobs:
           exit 1
         fi
 
-    - name: Monitor Ollama logs in real-time
+    - name: Test Ollama through ngrok
       run: |
-        echo "=== Monitoring Ollama logs ==="
-        echo "Ollama logs will be displayed here for 60 seconds..."
-        echo "Send requests to: $NGROK_URL"
-        echo "Press Ctrl+C to continue workflow after testing"
+        echo "Testing Ollama API through ngrok..."
         
-        # Display Ollama logs for monitoring
-        timeout 60s tail -f ~/.ollama/logs/server.log || true
-
-    - name: Test complete workflow
-      run: |
-        echo "=== Testing Complete Workflow ==="
-        echo "Testing API endpoint through ngrok..."
-        
-        # Test generate endpoint
-        curl -X POST "$NGROK_URL/api/generate" \
+        # Test with correct endpoint and headers
+        response=$(curl -s -w "\n%{http_code}" \
+          -X POST "$NGROK_URL/api/generate" \
           -H "Content-Type: application/json" \
-          -d '{"model": "deepseek-coder:6.7b", "prompt": "Hello", "stream": false}' \
-          -w "\nResponse Code: %{http_code}\n"
+          -H "User-Agent: Ollama-Test" \
+          -d '{"model": "mistral", "prompt": "Hello", "stream": false}')
         
-        echo "Test completed successfully"
-
-    - name: Show connection details
-      run: |
-        echo "=== CONNECTION DETAILS ==="
-        echo "Public Ngrok URL: $NGROK_URL"
-        echo "Local Ollama URL: http://localhost:11434"
-        echo "MCP Enabled: true"
-        echo "=========================="
+        http_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | sed '$d')
         
-        # Show ngrok inspection interface info
-        echo "For detailed request inspection, visit: http://localhost:4040"
-        echo "Use this for testing: curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"deepseek-coder:6.7b\", \"prompt\": \"Hello\"}'"
+        echo "HTTP Response Code: $http_code"
+        echo "Response Body: $response_body"
+        
+        if [ "$http_code" -eq 200 ]; then
+          echo "✅ Ollama API test successful"
+        else
+          echo "❌ Ollama API test failed with HTTP $http_code"
+          echo "Ngrok logs:"
+          cat ngrok.log
+          echo "Ollama logs:"
+          cat ~/.ollama/logs/server.log
+          exit 1
+        fi
 
-    - name: Keep server running for testing (optional)
-      if: always()
+    - name: Monitor connections
       run: |
-        echo "Server is running. Press Ctrl+C to stop or wait for timeout."
-        # Keep the workflow running for 10 minutes for testing
+        echo "=== Active Connections ==="
+        echo "Ollama processes:"
+        ps aux | grep ollama | grep -v grep
+        echo ""
+        echo "Ngrok processes:"
+        ps aux | grep ngrok | grep -v grep
+        echo ""
+        echo "Open ports:"
+        netstat -tlnp
+        echo ""
+        echo "=== ================= ==="
+
+    - name: Keep server running for testing
+      run: |
+        echo "🚀 Server is running!"
+        echo "Public URL: $NGROK_URL"
+        echo "Test with: curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"mistral\", \"prompt\": \"Hello\"}'"
+        echo ""
+        echo "⏰ Keeping server running for 10 minutes..."
         sleep 600
