@@ -1,0 +1,83 @@
+name: Ollama MCP Server with Ngrok
+
+on:
+  workflow_dispatch:  # Manual trigger
+ 
+
+jobs:
+  setup-ollama-with-ngrok:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # Increase timeout for model downloads
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check system resources
+      run: |
+        echo "=== SYSTEM RESOURCES ==="
+        echo "CPU cores: $(nproc)"
+        echo "Memory:"
+        free -h
+        echo "Disk space:"
+        df -h
+        echo "=== =============== ==="
+
+    - name: Install Ollama
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        echo "Ollama installed successfully"
+
+    - name: Start Ollama server in background
+      run: |
+        ollama serve &
+        echo "Ollama server started in background"
+        sleep 10  # Wait for server to initialize
+
+    - name: Verify Ollama is running
+      run: |
+        curl -s http://localhost:11434/api/tags || echo "Ollama API check failed"
+
+    - name: Pull model with MCP enabled
+      env:
+        OLLAMA_MCP_ENABLE: "true"  # Enable MCP support
+      run: |
+        # Pull a model that supports MCP (e.g., mistral, llama3.2, or qwen2.5)
+        ollama pull mistral
+        echo "Model pulled with MCP enabled"
+
+    - name: Install ngrok
+      run: |
+        wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+        tar -xzf ngrok-v3-stable-linux-amd64.tgz
+        sudo mv ngrok /usr/local/bin/
+        ngrok --version
+
+    - name: Setup ngrok authentication
+      run: |
+        ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        echo "Ngrok authtoken configured"
+
+    - name: Expose Ollama endpoint with ngrok
+      run: |
+        # Start ngrok tunnel in background
+        ngrok http 11434 --log=stdout > ngrok.log 2>&1 &
+        sleep 5  # Wait for ngrok to start
+        
+        # Extract public URL from ngrok log
+        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+        echo "Ollama endpoint exposed at: $NGROK_URL"
+        echo "NGROK_PUBLIC_URL=$NGROK_URL" >> $GITHUB_ENV
+
+    - name: Test Ollama through ngrok
+      run: |
+        # Test the exposed endpoint
+        curl -s $NGROK_URL/api/tags -H "Content-Type: application/json" | jq
+        echo "Ollama endpoint test completed"
+
+    - name: Show connection details
+      run: |
+        echo "=== OLLAMA MCP SERVER SETUP COMPLETE ==="
+        echo "Local endpoint: http://localhost:11434"
+        echo "Public endpoint: $NGROK_PUBLIC_URL"
+        echo "========================================"
