@@ -6,7 +6,7 @@ on:
     - cron: '0 0 * * *'  # Optional: runs daily at midnight UTC
 
 env:
-  MODEL_NAME: "deepseek-coder:33b"  # Using Deepseek Coder 70B model
+  MODEL_NAME: "deepseek-coder:6.7b"  # Using Deepseek Coder 70B model
   OLLAMA_MCP_ENABLE: "true"  # Enable MCP support
   SLEEP_DURATION: "5h"  # Sleep for 5 hours
 
