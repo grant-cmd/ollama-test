@@ -1,13 +1,19 @@
-name: Ollama MCP Server with Ngrok
+name: Ollama MCP Server with Ngrok and Hardware Testing
 
 on:
   workflow_dispatch:  # Manual trigger
- 
+  schedule:
+    - cron: '0 0 * * *'  # Optional: runs daily at midnight UTC
+
+env:
+  MODEL_NAME: "deepseek-coder:33b"  # Using Deepseek Coder 70B model
+  OLLAMA_MCP_ENABLE: "true"  # Enable MCP support
+  SLEEP_DURATION: "5h"  # Sleep for 5 hours
 
 jobs:
   setup-ollama-with-ngrok:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Increase timeout for model downloads
+    timeout-minutes: 360  # 6 hours max (for 5h sleep + setup time)
 
     steps:
     - name: Checkout repository
@@ -15,13 +21,59 @@ jobs:
 
     - name: Check system resources
       run: |
-        echo "=== SYSTEM RESOURCES ==="
-        echo "CPU cores: $(nproc)"
-        echo "Memory:"
+        echo "=== SYSTEM RESOURCE ANALYSIS ==="
+        echo "CPU Information:"
+        nproc
+        lscpu | grep -E "(Model name|CPU MHz|CPU max MHz|CPU min MHz)"
+        echo ""
+        
+        echo "Memory Analysis:"
         free -h
-        echo "Disk space:"
+        echo "Total RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+        echo "Available RAM: $(free -h | awk '/^Mem:/ {print $7}')"
+        echo ""
+        
+        echo "Storage Analysis:"
         df -h
-        echo "=== =============== ==="
+        echo "Total Disk Space: $(df -h / | awk 'NR==2 {print $2}')"
+        echo "Available Disk Space: $(df -h / | awk 'NR==2 {print $4}')"
+        echo ""
+        
+        echo "Hardware Specifications:"
+        echo "Architecture: $(uname -m)"
+        echo "Kernel Version: $(uname -r)"
+        echo "OS Version: $(lsb_release -d | cut -f2)"
+        echo "=== ======================= ==="
+
+    - name: Validate resource requirements
+      run: |
+        # Check if system meets minimum requirements for 70B model
+        MIN_RAM=64  # Minimum 64GB RAM recommended for 70B model
+        MIN_DISK=150  # Minimum 150GB disk space
+        
+        AVAILABLE_RAM=$(free -g | awk '/^Mem:/ {print $7}')
+        AVAILABLE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+        
+        echo "Checking system meets minimum requirements for ${MODEL_NAME}..."
+        
+        if [ "$AVAILABLE_RAM" -lt "$MIN_RAM" ]; then
+          echo "❌ WARNING: Insufficient RAM. Available: ${AVAILABLE_RAM}GB, Recommended: ${MIN_RAM}GB"
+          echo "Model may run slowly or fail"
+        else
+          echo "✅ RAM: ${AVAILABLE_RAM}GB (Meets requirement)"
+        fi
+        
+        if [ "$AVAILABLE_DISK" -lt "$MIN_DISK" ]; then
+          echo "❌ ERROR: Insufficient disk space. Available: ${AVAILABLE_DISK}GB, Required: ${MIN_DISK}GB"
+          exit 1
+        else
+          echo "✅ Disk Space: ${AVAILABLE_DISK}GB (Meets requirement)"
+        fi
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget curl jq lm-sensors pciutils usbutils
 
     - name: Install Ollama
       run: |
@@ -30,21 +82,28 @@ jobs:
 
     - name: Start Ollama server in background
       run: |
-        ollama serve &
+        # Start Ollama with verbose logging
+        ollama serve > ollama.log 2>&1 &
         echo "Ollama server started in background"
-        sleep 10  # Wait for server to initialize
+        sleep 15  # Wait for server to initialize
 
     - name: Verify Ollama is running
       run: |
+        echo "Checking Ollama server status..."
         curl -s http://localhost:11434/api/tags || echo "Ollama API check failed"
+        echo "Ollama server logs:"
+        tail -20 ollama.log
 
-    - name: Pull model with MCP enabled
+    - name: Pull Deepseek Coder 70B model
       env:
-        OLLAMA_MCP_ENABLE: "true"  # Enable MCP support
+        OLLAMA_MCP_ENABLE: ${{ env.OLLAMA_MCP_ENABLE }}
       run: |
-        # Pull a model that supports MCP (e.g., mistral, llama3.2, or qwen2.5)
-        ollama pull mistral
-        echo "Model pulled with MCP enabled"
+        echo "Pulling ${MODEL_NAME} with MCP support..."
+        timeout 1800 ollama pull $MODEL_NAME  # 30-minute timeout for pull
+        
+        # Verify model was pulled successfully
+        ollama list
+        echo "Model pull completed"
 
     - name: Install ngrok
       run: |
@@ -60,24 +119,69 @@ jobs:
 
     - name: Expose Ollama endpoint with ngrok
       run: |
-        # Start ngrok tunnel in background
+        # Start ngrok tunnel in background with detailed logging
         ngrok http 11434 --log=stdout > ngrok.log 2>&1 &
-        sleep 5  # Wait for ngrok to start
+        sleep 10  # Wait for ngrok to start
         
-        # Extract public URL from ngrok log
+        # Extract public URL from ngrok API
         NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-        echo "Ollama endpoint exposed at: $NGROK_URL"
+        echo "Ollama MCP endpoint exposed at: $NGROK_URL"
         echo "NGROK_PUBLIC_URL=$NGROK_URL" >> $GITHUB_ENV
+        
+        # Display connection details
+        echo "=== CONNECTION DETAILS ==="
+        echo "Public URL: $NGROK_URL"
+        echo "Local URL: http://localhost:11434"
+        echo "Model: $MODEL_NAME"
+        echo "MCP Enabled: $OLLAMA_MCP_ENABLE"
+        echo "=========================="
 
     - name: Test Ollama through ngrok
       run: |
-        # Test the exposed endpoint
+        echo "Testing Ollama endpoint through ngrok..."
         curl -s $NGROK_URL/api/tags -H "Content-Type: application/json" | jq
-        echo "Ollama endpoint test completed"
+        echo "Endpoint test completed successfully"
 
-    - name: Show connection details
+    - name: Monitor system resources during operation
       run: |
-        echo "=== OLLAMA MCP SERVER SETUP COMPLETE ==="
-        echo "Local endpoint: http://localhost:11434"
-        echo "Public endpoint: $NGROK_PUBLIC_URL"
-        echo "========================================"
+        echo "Starting resource monitoring..."
+        # Log system resources every 30 seconds
+        for i in {1..600}; do  # 600 iterations = 5 hours
+          echo "=== $(date) ===" >> resource_monitor.log
+          echo "CPU Usage: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}')%" >> resource_monitor.log
+          echo "Memory Usage: $(free -h | awk '/^Mem:/ {print $3 "/" $2}')" >> resource_monitor.log
+          echo "Disk Usage: $(df -h / | awk 'NR==2 {print $3 "/" $2}')" >> resource_monitor.log
+          echo "Ollama Processes: $(ps aux | grep ollama | grep -v grep | wc -l)" >> resource_monitor.log
+          sleep 30
+        done &
+        echo "Resource monitoring started in background"
+
+    - name: Keep server running for testing
+      run: |
+        echo "🚀 Ollama MCP Server is now LIVE!"
+        echo "Public Endpoint: $NGROK_PUBLIC_URL"
+        echo "Model: $MODEL_NAME"
+        echo "MCP Support: Enabled"
+        echo ""
+        echo "⏰ Server will remain active for $SLEEP_DURATION for testing"
+        echo "Use this endpoint in your applications:"
+        echo "curl -X POST $NGROK_PUBLIC_URL/api/generate -H \"Content-Type: application/json\" -d '{\"model\": \"$MODEL_NAME\", \"prompt\": \"Your prompt here\"}'"
+        echo ""
+        echo "Press Ctrl+C or cancel the workflow to stop the server"
+        
+        # Sleep for 5 hours (18000 seconds)
+        sleep 18000
+
+    # - name: Cleanup and shutdown
+    #   if: always()
+    #   run: |
+    #     echo "🛑 Shutting down Ollama MCP Server..."
+    #     # Stop ollama processes
+    #     pkill -f ollama
+    #     # Stop ngrok
+    #     pkill -f ngrok
+    #     echo "✅ Server shutdown completed"
+        
+        # Show final resource usage
+        echo "=== FINAL RESOURCE USAGE ==="
+        tail -20 resource_monitor.log
