@@ -183,5 +183,5 @@ jobs:
     #     echo "✅ Server shutdown completed"
         
         # Show final resource usage
-        echo "=== FINAL RESOURCE USAGE ==="
-        tail -20 resource_monitor.log
+        # echo "=== FINAL RESOURCE USAGE ==="
+        # tail -20 resource_monitor.log
