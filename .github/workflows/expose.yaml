@@ -69,7 +69,7 @@ jobs:
         OLLAMA_MCP_ENABLE: "true"
         OLLAMA_HOST: "0.0.0.0:11435"
       run: |
-        ollama pull mistral
+        ollama pull deepseek-r1:1.5b
         echo "Model pulled successfully"
 
     - name: Install ngrok
@@ -114,7 +114,7 @@ jobs:
         response=$(curl -s -w "\n%{http_code}" \
           -X POST "$NGROK_URL/api/generate" \
           -H "Content-Type: application/json" \
-          -d '{"model": "mistral", "prompt": "Hello", "stream": false}')
+          -d '{"model": "deepseek-r1:1.5b", "prompt": "Hello", "stream": false}')
         
         http_code=$(echo "$response" | tail -n1)
         response_body=$(echo "$response" | sed '$d')
@@ -139,7 +139,7 @@ jobs:
         echo "MCP Enabled: true"
         echo "=========================="
         echo "Test with:"
-        echo "curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"mistral\", \"prompt\": \"Hello\"}'"
+        echo "curl -X POST $NGROK_URL/api/generate -H 'Content-Type: application/json' -d '{\"model\": \"deepseek-r1:1.5b\", \"prompt\": \"Hello\"}'"
 
     - name: Keep server running for testing
       run: |
